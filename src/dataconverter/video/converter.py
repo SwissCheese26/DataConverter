@@ -88,7 +88,7 @@ def build_command(source: Path, target: Path, fmt_name: str, opts: VideoOptions,
         if fmt.name in _LOSSLESS_AUDIO:
             audio_codec, audio_args = _LOSSLESS_AUDIO[fmt.name], []
         else:
-            audio_args = ["-b:a", "320k"]
+            audio_args = ["-b:a", "256k" if fmt.name == "webm" else "320k"]  # opus tops out at 256k
     elif opts.target_size_mb:
         if not duration:
             raise ConversionError("Cannot aim for a file size: the video length is unknown.")

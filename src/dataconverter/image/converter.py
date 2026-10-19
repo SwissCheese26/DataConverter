@@ -117,7 +117,7 @@ def _codec_kwargs(fmt: ImageFormat, quality: int, lossless: bool) -> dict:
             "jpg": {"quality": 100, "subsampling": 0},  # near-lossless: JPEG cannot be exact
             "webp": {"lossless": True},
             "avif": {"quality": 100, "subsampling": "4:4:4"},
-            "heic": {"quality": -1},
+            "heic": {"quality": -1, "chroma": 444, "matrix_coefficients": 0},  # 4:2:0 would not be exact
             "jp2": {"irreversible": False},
             "tiff": {"compression": "tiff_adobe_deflate"},
             "png": {"optimize": True},
