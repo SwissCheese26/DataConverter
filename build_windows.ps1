@@ -6,7 +6,7 @@ $ErrorActionPreference = "Stop"
 python -m pip install -e . pyinstaller
 python -m PyInstaller --noconfirm --clean --windowed --name DataConverter `
     --collect-all pillow_heif --collect-all psd_tools --collect-data cairosvg `
-    --paths src src\dataconverter\gui\__main__.py
+    --paths src run_gui.py
 
 if (-not $FfmpegDir) { $FfmpegDir = Split-Path (Get-Command ffmpeg).Source }
 Copy-Item "$FfmpegDir\ffmpeg.exe", "$FfmpegDir\ffprobe.exe" dist\DataConverter\
