@@ -2,29 +2,15 @@
 
 from __future__ import annotations
 
-import json
-import re
-import subprocess
-import threading
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
-from .ffmpeg import find_tool, popen_flags
+from ..common import Cancelled, CancelToken, ConversionError, ConversionResult, ProgressCallback
+from ..ffrun import duration_seconds, probe, run_ffmpeg
+from .ffmpeg import find_tool
 from .formats import INPUT_EXTENSIONS, get_format
-
-ProgressCallback = Callable[[float], None]  # 0.0 .. 1.0
-
-_TIME_RE = re.compile(r"out_time_us=(\d+)")
-
-
-class ConversionError(RuntimeError):
-    pass
-
-
-class Cancelled(ConversionError):
-    pass
 
 
 @dataclass
@@ -35,43 +21,6 @@ class AudioOptions:
     quality: int | None = None  # codec VBR quality (-q:a), lossy only
     copy_metadata: bool = True
     overwrite: bool = False
-
-
-@dataclass
-class ConversionResult:
-    source: Path
-    target: Path | None
-    ok: bool
-    error: str | None = None
-
-
-@dataclass
-class CancelToken:
-    _event: threading.Event = field(default_factory=threading.Event)
-
-    def cancel(self) -> None:
-        self._event.set()
-
-    @property
-    def cancelled(self) -> bool:
-        return self._event.is_set()
-
-
-def probe(path: str | Path) -> dict:
-    """Return ffprobe info (format + streams) as a dict."""
-    cmd = [find_tool("ffprobe"), "-v", "error", "-print_format", "json",
-           "-show_format", "-show_streams", str(path)]
-    proc = subprocess.run(cmd, capture_output=True, text=True, **popen_flags())
-    if proc.returncode != 0:
-        raise ConversionError(f"Cannot read {path}: {proc.stderr.strip()}")
-    return json.loads(proc.stdout)
-
-
-def duration_seconds(path: str | Path) -> float | None:
-    try:
-        return float(probe(path)["format"]["duration"])
-    except (KeyError, ValueError, ConversionError):
-        return None
 
 
 def build_command(source: Path, target: Path, fmt_name: str, opts: AudioOptions) -> list[str]:
@@ -122,31 +71,7 @@ def convert(
     # Write to a temp name so a failed/cancelled run never leaves a half file at `target`.
     tmp = target.with_name(target.stem + ".partial" + target.suffix)
     cmd = build_command(src, tmp, target_format, AudioOptions(**{**opts.__dict__, "overwrite": True}))
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, **popen_flags())
-    stderr_buf: list[str] = []
-    t = threading.Thread(target=lambda: stderr_buf.append(proc.stderr.read()), daemon=True)
-    t.start()
-    try:
-        for line in proc.stdout:
-            if cancel and cancel.cancelled:
-                proc.kill()
-                break
-            m = _TIME_RE.match(line.strip())
-            if m and progress and total:
-                progress(min(int(m.group(1)) / 1e6 / total, 1.0))
-        proc.wait()
-        t.join()
-    finally:
-        if proc.poll() is None:
-            proc.kill()
-            proc.wait()
-    if cancel and cancel.cancelled:
-        tmp.unlink(missing_ok=True)
-        raise Cancelled(f"Cancelled: {src.name}")
-    if proc.returncode != 0:
-        tmp.unlink(missing_ok=True)
-        raise ConversionError(f"ffmpeg failed for {src.name}: {''.join(stderr_buf).strip()}")
+    run_ffmpeg(cmd, tmp, src.name, total, progress, cancel)
     tmp.replace(target)
     if progress:
         progress(1.0)
