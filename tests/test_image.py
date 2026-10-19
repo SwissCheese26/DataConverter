@@ -11,6 +11,27 @@ from dataconverter.common import ConversionError
 from dataconverter.image import ImageOptions, collect_inputs, convert, convert_batch
 
 
+def _cairo_usable() -> bool:
+    try:
+        import cairosvg  # noqa: F401
+        return True
+    except (ImportError, OSError):
+        return False
+
+
+needs_cairo = pytest.mark.skipif(
+    not _cairo_usable(), reason="Cairo library not available (known on Windows, see issue #5)")
+
+
+def _imagemagick() -> str | None:
+    """Real ImageMagick only: Windows ships an unrelated `convert.exe` (disk tool)."""
+    exe = shutil.which("magick") or shutil.which("convert")
+    if not exe:
+        return None
+    out = subprocess.run([exe, "-version"], capture_output=True, text=True).stdout
+    return exe if "ImageMagick" in out else None
+
+
 @pytest.fixture
 def photo(tmp_path):
     im = Image.new("RGB", (640, 480), (30, 120, 200))
@@ -104,6 +125,7 @@ def test_multipage_to_pdf(tmp_path):
     assert out.read_bytes().count(b"/Type /Page\n") + out.read_bytes().count(b"/Type /Page ") >= 2
 
 
+@needs_cairo
 def test_svg_input(tmp_path):
     svg = tmp_path / "icon.svg"
     svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">'
@@ -192,6 +214,7 @@ def test_apng_to_avif_float_durations(tmp_path):
         assert im.n_frames == 4
 
 
+@needs_cairo
 def test_svg_without_size(tmp_path):
     svg = tmp_path / "nosize.svg"
     svg.write_text('<svg xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="40"/></svg>')
@@ -201,10 +224,11 @@ def test_svg_without_size(tmp_path):
 
 def test_psd_16bit(tmp_path):
     pytest.importorskip("psd_tools")
-    if not shutil.which("convert"):
+    magick = _imagemagick()
+    if not magick:
         pytest.skip("ImageMagick needed to create a 16-bit PSD")
     src = tmp_path / "deep.psd"
-    subprocess.run(["convert", "-size", "40x20", "gradient:red-blue", "-depth", "16", str(src)], check=True)
+    subprocess.run([magick, "-size", "40x20", "gradient:red-blue", "-depth", "16", str(src)], check=True)
     with Image.open(convert(src, "png", tmp_path / "o")) as im:
         assert im.size == (40, 20)
 
