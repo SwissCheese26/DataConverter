@@ -21,8 +21,12 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-      - uses: FedericoCarboni/setup-ffmpeg@v3
-        id: ffmpeg
+      - name: ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        uses: FedericoCarboni/setup-ffmpeg@v3
+      - name: ffmpeg + ImageMagick (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg imagemagick
       - name: Show tool versions
         shell: bash
         run: |
