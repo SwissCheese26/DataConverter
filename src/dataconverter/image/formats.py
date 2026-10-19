@@ -34,6 +34,10 @@ FORMATS: dict[str, ImageFormat] = {
     )
 }
 
+# Formats where lossless=True gives a bit-exact copy of the pixels.
+# (jpg and pdf only get the highest quality; their codec cannot be exact.)
+TRULY_LOSSLESS = frozenset({"png", "webp", "avif", "heic", "jp2", "tiff", "bmp", "tga", "ppm"})
+
 _ALIASES = {"jpeg": "jpg", "tif": "tiff", "heif": "heic", "jpeg2000": "jp2"}
 
 # Input filter for folder scans; Pillow (+ plugins) decides what it can really open.

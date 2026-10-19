@@ -16,7 +16,10 @@ from .formats import INPUT_EXTENSIONS, get_format
 
 @dataclass
 class VideoOptions:
-    crf: int = 23  # quality, lower = better (x264/vp9); ignored by old codecs
+    mode: str = "compress"  # "compress" | "lossless" | "copy" (see build_command)
+    crf: int = 23  # quality for mode="compress", lower = better (x264/vp9); ignored by old codecs
+    target_size_mb: float | None = None  # mode="compress": aim for (at most about) this file size
+    suffix: str = ""  # appended to the file name, e.g. "_small"
     preset: str = "medium"  # x264 speed/size trade-off
     height: int | None = None  # scale to this height, keep aspect (never upscales)
     fps: float | None = None
@@ -34,10 +37,36 @@ def _scale_filter(height: int | None) -> str | None:
     return f"scale=-2:'trunc(min({int(height)},ih)/2)*2'" if height else None
 
 
-def build_command(source: Path, target: Path, fmt_name: str, opts: VideoOptions) -> list[str]:
+_LOSSLESS_AUDIO = {"mkv": "flac", "mp4": "alac", "mov": "alac", "m4v": "alac"}
+_LOSSLESS_FORMATS = {"mp4", "mkv", "mov", "m4v", "ts", "webm", "3gp"}
+MODES = ("compress", "lossless", "copy")
+
+
+def build_command(source: Path, target: Path, fmt_name: str, opts: VideoOptions,
+                  duration: float | None = None) -> list[str]:
+    """Modes: compress = re-encode with CRF (or to `target_size_mb`);
+    lossless = re-encode without any quality loss (huge files);
+    copy = no re-encoding at all, only change the container (instant, same quality)."""
     fmt = get_format(fmt_name)
+    if opts.mode not in MODES:
+        raise ConversionError(f"Unknown mode {opts.mode!r}. Use one of: {', '.join(MODES)}.")
     cmd = [find_tool("ffmpeg"), "-hide_banner", "-nostdin", "-loglevel", "error",
            "-progress", "pipe:1", "-nostats", "-y", "-i", str(source)]
+    if opts.mode == "copy":
+        if fmt.name == "gif":
+            raise ConversionError("GIF cannot be created without re-encoding. Use mode 'compress'.")
+        if opts.height or opts.fps or opts.target_size_mb:
+            raise ConversionError("Resizing, frame rate and target size need re-encoding; "
+                                  "they cannot be combined with mode 'copy'.")
+        cmd += ["-map", "0:v:0?", "-map", "0:a:0?", "-sn", "-c", "copy"]
+        if fmt.name in ("mp4", "mov", "m4v"):
+            cmd += ["-movflags", "+faststart"]
+        cmd += ["-map_metadata", "0" if opts.copy_metadata else "-1", str(target)]
+        return cmd
+    if opts.mode == "lossless":
+        if fmt.name not in _LOSSLESS_FORMATS:
+            raise ConversionError(
+                f"Lossless is not available for {fmt.name.upper()}. Use MKV or MP4 for lossless output.")
     if fmt.name == "gif":
         vf = f"fps={opts.gif_fps},scale='min({opts.gif_width},iw)':-1:flags=lanczos"
         vf += ",split[a][b];[a]palettegen[p];[b][p]paletteuse"
@@ -50,25 +79,47 @@ def build_command(source: Path, target: Path, fmt_name: str, opts: VideoOptions)
     if vf:
         cmd += ["-vf", ",".join(vf)]
     cmd += ["-c:v", fmt.vcodec, "-pix_fmt", "yuv420p"]  # 8-bit 4:2:0 plays everywhere
-    if fmt.vcodec == "libx264":
+    audio_codec, audio_args = fmt.acodec, ["-b:a", opts.audio_bitrate]
+    if opts.mode == "lossless":
+        if fmt.vcodec == "libx264":
+            cmd += ["-preset", "veryfast", "-crf", "0"]
+        else:  # webm
+            cmd += ["-lossless", "1", "-row-mt", "1"]
+        if fmt.name in _LOSSLESS_AUDIO:
+            audio_codec, audio_args = _LOSSLESS_AUDIO[fmt.name], []
+        else:
+            audio_args = ["-b:a", "320k"]
+    elif opts.target_size_mb:
+        if not duration:
+            raise ConversionError("Cannot aim for a file size: the video length is unknown.")
+        audio_bps = int(opts.audio_bitrate.rstrip("kK")) * 1000 if opts.audio_bitrate.lower().endswith("k") else 128_000
+        total_bps = opts.target_size_mb * 8_000_000 * 0.95 / duration  # 5 % head-room for the container
+        v_bps = int(total_bps - audio_bps)
+        if v_bps < 50_000:
+            raise ConversionError(
+                f"{opts.target_size_mb:g} MB is too small for a {duration:.0f} s video. Choose a larger size.")
+        if fmt.vcodec == "libx264":
+            cmd += ["-preset", opts.preset]
+        cmd += ["-b:v", str(v_bps), "-maxrate", str(int(v_bps * 1.2)), "-bufsize", str(v_bps * 2)]
+    elif fmt.vcodec == "libx264":
         cmd += ["-preset", opts.preset, "-crf", str(opts.crf)]
     elif fmt.vcodec == "libvpx-vp9":
         cmd += ["-crf", str(opts.crf + 8), "-row-mt", "1", "-deadline", "good", "-cpu-used", "4"]
     else:
         cmd += ["-b:v", opts.video_bitrate or "2M"]
-    cmd += ["-c:a", fmt.acodec, "-b:a", opts.audio_bitrate]
+    cmd += ["-c:a", audio_codec, *audio_args]
     cmd += list(fmt.extra)
     cmd += ["-map_metadata", "0" if opts.copy_metadata else "-1"]
     cmd.append(str(target))
     return cmd
 
 
-def _prepare_target(src: Path, ext: str, output_dir, overwrite: bool) -> tuple[Path, Path]:
+def _prepare_target(src: Path, ext: str, output_dir, overwrite: bool, suffix: str = "") -> tuple[Path, Path]:
     if not src.is_file():
         raise ConversionError(f"Input file not found: {src}")
     out_dir = Path(output_dir) if output_dir else src.parent
     out_dir.mkdir(parents=True, exist_ok=True)
-    target = out_dir / (src.stem + ext)
+    target = out_dir / (src.stem + suffix + ext)
     if target.resolve() == src.resolve():
         raise ConversionError("Output would overwrite the input file; choose another folder.")
     if target.exists() and not overwrite:
@@ -88,12 +139,12 @@ def convert(
     opts = options or VideoOptions()
     src = Path(source)
     fmt = get_format(target_format)
-    target, tmp = _prepare_target(src, fmt.extension, output_dir, opts.overwrite)
+    target, tmp = _prepare_target(src, fmt.extension, output_dir, opts.overwrite, opts.suffix)
     info = probe(src)
     if not any(s.get("codec_type") == "video" for s in info["streams"]):
         raise ConversionError(f"{src.name} has no video stream.")
     total = float(info["format"].get("duration") or 0) or None
-    run_ffmpeg(build_command(src, tmp, target_format, opts), tmp, src.name, total, progress, cancel)
+    run_ffmpeg(build_command(src, tmp, target_format, opts, total), tmp, src.name, total, progress, cancel)
     tmp.replace(target)
     if progress:
         progress(1.0)

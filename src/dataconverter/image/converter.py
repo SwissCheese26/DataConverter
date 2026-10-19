@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import subprocess
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +13,7 @@ from typing import Callable, Iterable
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from ..common import CancelToken, ConversionError, ConversionResult, ProgressCallback
+from ..audio.ffmpeg import find_tool, popen_flags
 from .formats import INPUT_EXTENSIONS, ImageFormat, get_format
 
 try:  # HEIC/HEIF read + write
@@ -26,7 +29,10 @@ _RAW_EXT = {".cr2", ".cr3", ".nef", ".arw", ".dng", ".orf", ".rw2", ".raf"}
 
 @dataclass
 class ImageOptions:
-    quality: int = 90  # 1..100 for lossy formats
+    quality: int = 90  # 1..100 for lossy formats (ignored when lossless)
+    lossless: bool = False  # no quality loss where the format allows it (see formats.TRULY_LOSSLESS)
+    max_bytes: int | None = None  # compress until the file is at most this big (lossy formats)
+    suffix: str = ""  # appended to the file name, e.g. "_small", so a file can be compressed in place
     max_width: int | None = None  # downscale to fit, keep aspect ratio
     max_height: int | None = None
     background: tuple[int, int, int] = (255, 255, 255)  # used where alpha can't be stored
@@ -103,6 +109,41 @@ def _prepare(im: Image.Image, fmt: ImageFormat, opts: ImageOptions) -> Image.Ima
     return im
 
 
+def _codec_kwargs(fmt: ImageFormat, quality: int, lossless: bool) -> dict:
+    q = max(1, min(100, quality))
+    if lossless:
+        return {
+            "jpg": {"quality": 100, "subsampling": 0},  # near-lossless: JPEG cannot be exact
+            "webp": {"lossless": True},
+            "avif": {"quality": 100, "subsampling": "4:4:4"},
+            "heic": {"quality": -1},
+            "jp2": {"irreversible": False},
+            "tiff": {"compression": "tiff_adobe_deflate"},
+            "png": {"optimize": True},
+            "pdf": {"quality": 100},
+        }.get(fmt.name, {})
+    if fmt.name == "jp2":  # Pillow ignores `quality` here unless a rate is given
+        return {"quality_mode": "rates", "quality_layers": [1 + (100 - q) * 0.6]}
+    return {"quality": q} if fmt.lossy else {}
+
+
+def _save_avif_lossless(im: Image.Image, tmp: Path) -> None:
+    """Pillow's AVIF encoder is only near-lossless (off by up to 3 levels), so use ffmpeg + libaom."""
+    if im.mode in ("RGBA", "LA", "PA"):
+        raise ConversionError("Lossless AVIF with transparency is not supported. "
+                              "Use PNG or WebP (lossless) to keep transparency.")
+    with tempfile.TemporaryDirectory(dir=tmp.parent) as td:
+        png = Path(td) / "in.png"
+        im.convert("RGB").save(png)
+        cmd = [find_tool("ffmpeg"), "-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-i", str(png),
+               "-c:v", "libaom-av1", "-aom-params", "lossless=1", "-pix_fmt", "gbrp",
+               "-cpu-used", "6", "-row-mt", "1", "-frames:v", "1", "-f", "avif", str(tmp)]
+        proc = subprocess.run(cmd, capture_output=True, text=True, **popen_flags())
+    if proc.returncode != 0:
+        tmp.unlink(missing_ok=True)
+        raise ConversionError(f"Lossless AVIF failed: {proc.stderr.strip()}")
+
+
 def _square(im: Image.Image, minimum: int) -> Image.Image:
     """Icons must be square: pad with transparency, and enlarge tiny images to `minimum`."""
     im = im.convert("RGBA")
@@ -144,7 +185,7 @@ def convert(
         raise ConversionError("HEIC output needs the 'pillow-heif' package.")
     out_dir = Path(output_dir) if output_dir else src.parent
     out_dir.mkdir(parents=True, exist_ok=True)
-    target = out_dir / (src.stem + fmt.extension)
+    target = out_dir / (src.stem + opts.suffix + fmt.extension)
     if target.resolve() == src.resolve():
         raise ConversionError("Output would overwrite the input file; choose another folder.")
     if target.exists() and not opts.overwrite:
@@ -158,8 +199,6 @@ def convert(
         with _open(src, opts) as im:
             frames = _frames(im, fmt, opts)
             save_kw: dict = {}
-            if fmt.lossy:
-                save_kw["quality"] = max(1, min(100, opts.quality))
             if opts.keep_metadata:
                 if im.info.get("icc_profile") and fmt.name in ("jpg", "png", "webp", "tiff"):
                     save_kw["icc_profile"] = im.info["icc_profile"]
@@ -179,7 +218,32 @@ def convert(
                     save_kw["loop"] = im.info.get("loop", 0)
             if fmt.name == "gif" and frames[0].mode == "RGBA":
                 frames = [f.convert("P", palette=Image.ADAPTIVE) for f in frames]
-            frames[0].save(tmp, format=fmt.pil_format, **save_kw)
+
+            def save(quality: int) -> int:
+                if fmt.name == "avif" and opts.lossless:
+                    if len(frames) > 1:
+                        raise ConversionError("Animated AVIF cannot be saved losslessly. Use WebP (lossless).")
+                    _save_avif_lossless(frames[0], tmp)
+                    return tmp.stat().st_size
+                kw = {**save_kw, **_codec_kwargs(fmt, quality, opts.lossless)}
+                frames[0].save(tmp, format=fmt.pil_format, **kw)
+                return tmp.stat().st_size
+
+            if opts.max_bytes and fmt.lossy and not opts.lossless:
+                lo, hi, best = 1, max(1, min(100, opts.quality)), None
+                while lo <= hi:  # highest quality that still fits
+                    mid = (lo + hi) // 2
+                    if save(mid) <= opts.max_bytes:
+                        best, lo = mid, mid + 1
+                    else:
+                        hi = mid - 1
+                if best is None:
+                    raise ConversionError(
+                        f"{src.name} cannot be made smaller than {opts.max_bytes / 1e6:.1f} MB "
+                        "by compression alone. Reduce the image size as well (max width/height).")
+                save(best)
+            else:
+                save(opts.quality)
     except ConversionError:
         tmp.unlink(missing_ok=True)
         raise
