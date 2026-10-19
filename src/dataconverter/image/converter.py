@@ -48,8 +48,9 @@ def _open(src: Path, opts: ImageOptions) -> Image.Image:
     if ext in _SVG_EXT:
         try:
             import cairosvg
-        except ImportError:
-            raise ConversionError("SVG input needs the 'cairosvg' package.") from None
+        except (ImportError, OSError):  # OSError: the Cairo DLL is missing (common on Windows)
+            raise ConversionError(
+                "SVG input needs the Cairo graphics library, which could not be loaded.") from None
         try:
             png = cairosvg.svg2png(url=str(src), dpi=opts.svg_dpi)
         except ValueError:  # no width/height/viewBox: render on a default canvas
