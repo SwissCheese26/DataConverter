@@ -63,9 +63,11 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          $out = & "dist\DataConverter\DataConverter.exe" --selftest
-          Write-Host $out
-          if ($LASTEXITCODE -ne 0) { throw "selftest failed" }
+          $log = "selftest.txt"
+          $p = Start-Process -FilePath "dist\DataConverter\DataConverter.exe" -ArgumentList "--selftest", $log -Wait -PassThru
+          if (Test-Path $log) { Get-Content $log }
+          if (-not (Test-Path $log)) { throw "selftest wrote no result: the app did not start" }
+          if ($p.ExitCode -ne 0) { throw "selftest failed (exit code $($p.ExitCode))" }
       - name: Zip
         shell: pwsh
         run: Compress-Archive -Path dist\DataConverter -DestinationPath DataConverter-windows.zip

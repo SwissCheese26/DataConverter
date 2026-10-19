@@ -591,8 +591,13 @@ def main() -> int:
     win.show()
     if "--selftest" in sys.argv:  # used by the build to check that the packaged app starts
         app.processEvents()
-        print("DataConverter GUI OK; ffmpeg", "missing" if win.banner.isVisible() else "found")
-        return 0
+        msg = "DataConverter GUI OK; ffmpeg " + ("missing" if win.banner.isVisible() else "found")
+        i = sys.argv.index("--selftest")
+        if len(sys.argv) > i + 1:  # a windowed .exe has no console: report through a file
+            Path(sys.argv[i + 1]).write_text(msg, encoding="utf-8")
+        elif sys.stdout:
+            print(msg)
+        return 1 if win.banner.isVisible() else 0
     return app.exec()
 
 
