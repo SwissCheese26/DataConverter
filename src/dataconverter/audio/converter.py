@@ -21,6 +21,7 @@ class AudioOptions:
     quality: int | None = None  # codec VBR quality (-q:a), lossy only
     copy_metadata: bool = True
     overwrite: bool = False
+    suffix: str = ""  # appended to the file name, e.g. "_small"
 
 
 def build_command(source: Path, target: Path, fmt_name: str, opts: AudioOptions) -> list[str]:
@@ -61,7 +62,7 @@ def convert(
     fmt = get_format(target_format)
     out_dir = Path(output_dir) if output_dir else src.parent
     out_dir.mkdir(parents=True, exist_ok=True)
-    target = out_dir / (src.stem + fmt.extension)
+    target = out_dir / (src.stem + opts.suffix + fmt.extension)
     if target.resolve() == src.resolve():
         raise ConversionError("Output would overwrite the input file; choose another folder.")
     if target.exists() and not opts.overwrite:

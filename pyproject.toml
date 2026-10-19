@@ -3,10 +3,13 @@ name = "dataconverter"
 version = "0.1.0"
 description = "Windows DataConverter - audio conversion backend"
 requires-python = ">=3.10"
-dependencies = ["Pillow>=10.1", "pillow-heif>=0.16", "cairosvg>=2.7", "psd-tools>=1.9"]
+dependencies = ["Pillow>=10.1", "pillow-heif>=0.16", "cairosvg>=2.7", "psd-tools>=1.9", "PySide6-Essentials>=6.6"]
 
 [project.scripts]
 dataconverter = "dataconverter.cli:main"
+
+[project.gui-scripts]
+dataconverter-gui = "dataconverter.gui.app:main"
 
 [project.optional-dependencies]
 dev = ["pytest"]
