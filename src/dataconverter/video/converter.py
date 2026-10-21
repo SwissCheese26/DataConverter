@@ -9,7 +9,7 @@ from typing import Callable, Iterable
 
 from ..audio.ffmpeg import find_tool
 from ..audio.formats import get_format as get_audio_format
-from ..common import CancelToken, ConversionError, ConversionResult, ProgressCallback
+from ..common import CancelToken, ConversionError, ConversionResult, finalize, ProgressCallback
 from ..ffrun import duration_seconds, probe, run_ffmpeg
 from .formats import INPUT_EXTENSIONS, get_format
 
@@ -145,7 +145,7 @@ def convert(
         raise ConversionError(f"{src.name} has no video stream.")
     total = float(info["format"].get("duration") or 0) or None
     run_ffmpeg(build_command(src, tmp, target_format, opts, total), tmp, src.name, total, progress, cancel)
-    tmp.replace(target)
+    finalize(tmp, target)
     if progress:
         progress(1.0)
     return target
@@ -172,7 +172,7 @@ def extract_audio(
     total = float(info["format"].get("duration") or 0) or None
     cmd = build_audio(src, tmp, audio_format, AudioOptions(bitrate=bitrate, overwrite=True))
     run_ffmpeg(cmd, tmp, src.name, total, progress, cancel)
-    tmp.replace(target)
+    finalize(tmp, target)
     return target
 
 

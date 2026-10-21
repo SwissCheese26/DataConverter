@@ -68,6 +68,13 @@ jobs:
           if (Test-Path $log) { Get-Content $log }
           if (-not (Test-Path $log)) { throw "selftest wrote no result: the app did not start" }
           if ($p.ExitCode -ne 0) { throw "selftest failed (exit code $($p.ExitCode))" }
+      - name: Check that the packaged app really converts files
+        shell: pwsh
+        run: |
+          $report = "convert-report.txt"
+          $p = Start-Process -FilePath "dist\DataConverter\DataConverter.exe" -ArgumentList "--selftest-convert", $report -Wait -PassThru
+          if (Test-Path $report) { Get-Content $report } else { throw "no report written: the app crashed" }
+          if ($p.ExitCode -ne 0) { throw "packaged conversion check failed (exit code $($p.ExitCode))" }
       - name: Zip
         shell: pwsh
         run: Compress-Archive -Path dist\DataConverter -DestinationPath DataConverter-windows.zip

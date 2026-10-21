@@ -84,6 +84,7 @@ def convert_one(s: Settings, src: Path, progress: Callable[[float], None] | None
 
 _TRANSLATIONS = (
     ("Output already exists", "Die Zieldatei existiert schon. „Vorhandene Dateien überschreiben“ aktivieren?"),
+    ("Cannot write", "Die Zieldatei kann nicht geschrieben werden: Sie ist vermutlich in einem anderen Programm geöffnet."),
     ("Input file not found", "Die Datei wurde nicht gefunden."),
     ("Output would overwrite the input file", "Das Ergebnis würde das Original überschreiben. Anderen Ordner wählen."),
     ("has no video stream", "Diese Datei enthält kein Video."),

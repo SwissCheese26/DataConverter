@@ -584,6 +584,10 @@ class MainWindow(QMainWindow):
 
 
 def main() -> int:
+    if "--selftest-convert" in sys.argv:  # no window needed
+        from .selftest import run
+        i = sys.argv.index("--selftest-convert")
+        return run(Path(sys.argv[i + 1]))
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setStyleSheet(STYLE)

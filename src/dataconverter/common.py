@@ -36,3 +36,14 @@ class CancelToken:
     @property
     def cancelled(self) -> bool:
         return self._event.is_set()
+
+
+def finalize(tmp: Path, target: Path) -> None:
+    """Move the finished temp file into place. On Windows this fails while another program has the
+    target open (viewer, antivirus, sync client), so turn that into a readable error."""
+    try:
+        tmp.replace(target)
+    except OSError as e:
+        tmp.unlink(missing_ok=True)
+        raise ConversionError(
+            f"Cannot write {target.name}: the file may be open in another program or access is denied ({e}).") from e

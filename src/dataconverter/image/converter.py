@@ -12,7 +12,7 @@ from typing import Callable, Iterable
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from ..common import CancelToken, ConversionError, ConversionResult, ProgressCallback
+from ..common import CancelToken, ConversionError, ConversionResult, finalize, ProgressCallback
 from ..audio.ffmpeg import find_tool, popen_flags
 from .formats import INPUT_EXTENSIONS, ImageFormat, get_format
 
@@ -139,7 +139,7 @@ def _save_avif_lossless(im: Image.Image, tmp: Path) -> None:
         cmd = [find_tool("ffmpeg"), "-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-i", str(png),
                "-c:v", "libaom-av1", "-aom-params", "lossless=1", "-pix_fmt", "gbrp",
                "-cpu-used", "6", "-row-mt", "1", "-frames:v", "1", "-f", "avif", str(tmp)]
-        proc = subprocess.run(cmd, capture_output=True, text=True, **popen_flags())
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", **popen_flags())
     if proc.returncode != 0:
         tmp.unlink(missing_ok=True)
         raise ConversionError(f"Lossless AVIF failed: {proc.stderr.strip()}")
@@ -257,7 +257,7 @@ def convert(
     except Exception as e:  # Pillow raises many types (OSError, ValueError, KeyError, ...)
         tmp.unlink(missing_ok=True)
         raise ConversionError(f"{src.name}: conversion to {fmt.name} failed ({type(e).__name__}: {e})") from e
-    tmp.replace(target)
+    finalize(tmp, target)
     if progress:
         progress(1.0)
     return target

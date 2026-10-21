@@ -18,7 +18,7 @@ def probe(path: str | Path) -> dict:
     """Return ffprobe info (format + streams) as a dict."""
     cmd = [find_tool("ffprobe"), "-v", "error", "-print_format", "json",
            "-show_format", "-show_streams", str(path)]
-    proc = subprocess.run(cmd, capture_output=True, text=True, **popen_flags())
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", **popen_flags())
     if proc.returncode != 0:
         raise ConversionError(f"Cannot read {path}: {proc.stderr.strip()}")
     return json.loads(proc.stdout)
@@ -41,7 +41,7 @@ def run_ffmpeg(
 ) -> None:
     """Run `cmd` (which writes to `tmp`). Deletes `tmp` and raises on failure/cancel."""
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, **popen_flags())
+                            text=True, encoding="utf-8", errors="replace", **popen_flags())
     stderr_buf: list[str] = []
     t = threading.Thread(target=lambda: stderr_buf.append(proc.stderr.read()), daemon=True)
     t.start()

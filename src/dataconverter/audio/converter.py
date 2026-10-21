@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
-from ..common import Cancelled, CancelToken, ConversionError, ConversionResult, ProgressCallback
+from ..common import Cancelled, CancelToken, ConversionError, ConversionResult, finalize, ProgressCallback
 from ..ffrun import duration_seconds, probe, run_ffmpeg
 from .ffmpeg import find_tool
 from .formats import INPUT_EXTENSIONS, get_format
@@ -73,7 +73,7 @@ def convert(
     tmp = target.with_name(target.stem + ".partial" + target.suffix)
     cmd = build_command(src, tmp, target_format, AudioOptions(**{**opts.__dict__, "overwrite": True}))
     run_ffmpeg(cmd, tmp, src.name, total, progress, cancel)
-    tmp.replace(target)
+    finalize(tmp, target)
     if progress:
         progress(1.0)
     return target
